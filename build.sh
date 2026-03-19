@@ -1,2 +1,2 @@
 #!/usr/bin/env bash
-cc -std=c11 -ggdb -o handmade -lSDL3 main.c
+cc -std=c11 -ggdb -o build/handmade -lSDL3 code/main.c
