@@ -1,2 +1,3 @@
 #!/usr/bin/env bash
-cc -std=c11 -ggdb -o build/handmade -lSDL3 code/main.c
+mkdir -p build
+clang code/main.c -o build/handmade -std=c11 -lSDL3 -ggdb -Wall -Werror
