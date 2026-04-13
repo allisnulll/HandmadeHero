@@ -61,6 +61,11 @@ static void process_key(SDL_KeyboardEvent key) {
     case SDLK_F4:
         if (key.mod & SDL_KMOD_ALT) running = false;
         break;
+    case SDLK_F11:
+    case SDLK_F:
+        if (key.type == SDL_EVENT_KEY_DOWN)
+            SDL_SetWindowFullscreen(window, !((SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) == true));
+        break;
 
     case SDLK_D:
     case SDLK_RIGHT:
