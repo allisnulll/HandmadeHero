@@ -1,8 +1,13 @@
 #include <SDL3/SDL.h>
+#include <SDL3/SDL_init.h>
 #include <SDL3/SDL_main.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdint.h>
+
+#define WINDOW_WIDTH 1280
+#define WINDOW_HEIGHT 720
+#define BYTES_PER_PIXEL 4
 
 static bool running;
 
@@ -19,7 +24,6 @@ typedef struct {
     int width;
     int height;
     int pitch;
-    int bytes_per_pixel;
 } BackBuffer;
 
 static void render_back_buffer(BackBuffer *back_buffer) {
@@ -36,14 +40,22 @@ static void render_back_buffer(BackBuffer *back_buffer) {
         row += back_buffer->pitch;
     }
 
-    SDL_UpdateTexture(back_buffer->texture, &(SDL_Rect){0, 0, back_buffer->width, back_buffer->height}, back_buffer->memory, back_buffer->pitch);
+    SDL_UpdateTexture(
+        back_buffer->texture,
+        &(SDL_Rect){0, 0, back_buffer->width, back_buffer->height},
+        back_buffer->memory,
+        back_buffer->pitch
+    );
 }
 
 static void resize_back_buffer(BackBuffer *back_buffer) {
     SDL_GetWindowSize(window, &back_buffer->width, &back_buffer->height);
-    back_buffer->pitch = back_buffer->width * back_buffer->bytes_per_pixel;
+    back_buffer->pitch = back_buffer->width * BYTES_PER_PIXEL;
 
-    uint32_t *new_memory = realloc(back_buffer->memory, back_buffer->height*back_buffer->width * sizeof(uint32_t));
+    uint32_t *new_memory = realloc(
+        back_buffer->memory,
+        back_buffer->height*back_buffer->width * sizeof(uint32_t)
+    );
     if (!new_memory) {
         printf("realloc failed, frame skipped.\n");
         return;
@@ -64,7 +76,10 @@ static void process_key(SDL_KeyboardEvent key) {
     case SDLK_F11:
     case SDLK_F:
         if (key.type == SDL_EVENT_KEY_DOWN)
-            SDL_SetWindowFullscreen(window, !((SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) == true));
+            SDL_SetWindowFullscreen(
+                window,
+                !((SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) == true)
+            );
         break;
 
     case SDLK_D:
@@ -109,15 +124,28 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    if (!SDL_CreateWindowAndRenderer("Handmade Hero", 1280, 720, SDL_WINDOW_RESIZABLE | SDL_WINDOW_BORDERLESS, &window, &renderer)) {
+    if (!SDL_CreateWindowAndRenderer(
+        "Handmade Hero",
+        WINDOW_WIDTH,
+        WINDOW_HEIGHT,
+        SDL_WINDOW_RESIZABLE | SDL_WINDOW_BORDERLESS,
+        &window,
+        &renderer
+    )) {
         printf("Couldn't create window/renderer: %s\n", SDL_GetError());
         goto end1;
     }
 
-    BackBuffer back_buffer = {.bytes_per_pixel = 4};
+    BackBuffer back_buffer = {};
     SDL_GetWindowSize(window, &back_buffer.width, &back_buffer.height);
-    back_buffer.pitch = back_buffer.width * back_buffer.bytes_per_pixel;
-    if (!(back_buffer.texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBX32, SDL_TEXTUREACCESS_STREAMING, back_buffer.width, back_buffer.height))) {
+    back_buffer.pitch = back_buffer.width * BYTES_PER_PIXEL;
+    if (!(back_buffer.texture = SDL_CreateTexture(
+        renderer,
+        SDL_PIXELFORMAT_RGBX32,
+        SDL_TEXTUREACCESS_STREAMING,
+        back_buffer.width,
+        back_buffer.height
+    ))) {
         printf("Couldn't create back_buffer texture: %s\n", SDL_GetError());
         goto end2;
     }
