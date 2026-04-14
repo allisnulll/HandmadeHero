@@ -8,15 +8,19 @@
 #define WINDOW_WIDTH 1280
 #define WINDOW_HEIGHT 720
 #define BYTES_PER_PIXEL 4
+#define GAMEPAD_STICK_THRESHOLD 8000
 
-static bool running;
+static bool is_running;
 
 static SDL_Window *window;
 static SDL_Renderer *renderer;
+static SDL_Gamepad *gamepad;
 
 static int x_offset, y_offset;
 static bool up_is_down, down_is_down, left_is_down, right_is_down,
             up_was_down, down_was_down, left_was_down, right_was_down;
+
+static int gaxis_left_x, gaxis_left_y;
 
 typedef struct {
     SDL_Texture *texture;
@@ -65,13 +69,35 @@ static void resize_back_buffer(BackBuffer *back_buffer) {
     render_back_buffer(back_buffer);
 }
 
+static void process_gamepad_button(SDL_GamepadButtonEvent gbutton) {
+    if (gbutton.which != SDL_GetGamepadID(gamepad)) return;
+
+    switch(gbutton.button) {
+    case SDL_GAMEPAD_BUTTON_EAST:
+        is_running = false;
+        break;
+    case SDL_GAMEPAD_BUTTON_DPAD_RIGHT:
+        right_was_down = right_is_down;
+        right_is_down = (gbutton.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN);
+        break;
+    case SDL_GAMEPAD_BUTTON_DPAD_LEFT:
+        left_was_down = left_is_down;
+        left_is_down = (gbutton.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN);
+        break;
+    case SDL_GAMEPAD_BUTTON_DPAD_DOWN:
+        down_was_down = down_is_down;
+        down_is_down = (gbutton.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN);
+        break;
+    case SDL_GAMEPAD_BUTTON_DPAD_UP:
+        up_was_down = up_is_down;
+        up_is_down = (gbutton.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN);
+    }
+}
+
 static void process_key(SDL_KeyboardEvent key) {
     switch (key.key) {
     case SDLK_ESCAPE:
-        running = false;
-        break;
-    case SDLK_F4:
-        if (key.mod & SDL_KMOD_ALT) running = false;
+        is_running = false;
         break;
     case SDLK_F11:
     case SDLK_F:
@@ -107,19 +133,44 @@ static void process_key(SDL_KeyboardEvent key) {
 static void process_event(SDL_Event event, BackBuffer *back_buffer) {
     switch (event.type) {
     case SDL_EVENT_QUIT:
-        running = false;
+        is_running = false;
+        break;
+    case SDL_EVENT_WINDOW_RESIZED:
+        resize_back_buffer(back_buffer);
+        break;
+    case SDL_EVENT_GAMEPAD_ADDED:
+        if (gamepad == NULL) {
+            gamepad = SDL_OpenGamepad(event.gdevice.which);
+            if (gamepad == NULL) {
+                printf("Failed to open gamepad ID %u: %s\n", (unsigned int)event.gdevice.which, SDL_GetError());
+                break;
+            }
+        }
+        break;
+    case SDL_EVENT_GAMEPAD_REMOVED:
+        if (gamepad && SDL_GetGamepadID(gamepad) == event.gdevice.which) {
+            SDL_CloseGamepad(gamepad);
+            gamepad = NULL;
+        }
+        break;
+    case SDL_EVENT_GAMEPAD_BUTTON_UP:
+    case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
+        process_gamepad_button(event.gbutton);
+        break;
+    case SDL_EVENT_GAMEPAD_AXIS_MOTION:
+        if (event.gaxis.axis == SDL_GAMEPAD_AXIS_LEFTX)
+            gaxis_left_x = event.gaxis.value;
+        else if (event.gaxis.axis == SDL_GAMEPAD_AXIS_LEFTY)
+            gaxis_left_y = event.gaxis.value;
         break;
     case SDL_EVENT_KEY_UP:
     case SDL_EVENT_KEY_DOWN:
         process_key(event.key);
-        break;
-    case SDL_EVENT_WINDOW_RESIZED:
-        resize_back_buffer(back_buffer);
     }
 }
 
 int main(int argc, char *argv[]) {
-    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO)) {
+    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMEPAD | SDL_INIT_HAPTIC)) {
         printf("Couldn't initialize SDL: %s\n", SDL_GetError());
         return 1;
     }
@@ -128,7 +179,7 @@ int main(int argc, char *argv[]) {
         "Handmade Hero",
         WINDOW_WIDTH,
         WINDOW_HEIGHT,
-        SDL_WINDOW_RESIZABLE | SDL_WINDOW_BORDERLESS,
+        SDL_WINDOW_BORDERLESS,
         &window,
         &renderer
     )) {
@@ -162,19 +213,24 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    running = true;
-    while (running) {
+    is_running = true;
+    while (is_running) {
         SDL_RenderClear(renderer);
 
         SDL_Event event;
-        while (SDL_PollEvent(&event)) {
-            process_event(event, &back_buffer);
-        }
+        while (SDL_PollEvent(&event)) process_event(event, &back_buffer);
 
         if (right_is_down) ++x_offset;
         if (left_is_down) --x_offset;
         if (down_is_down) ++y_offset;
         if (up_is_down) --y_offset;
+        if (right_is_down || left_is_down || down_is_down || up_is_down)
+            SDL_RumbleGamepad(gamepad, 0, 0xffff, 10);
+
+        if (gaxis_left_x > GAMEPAD_STICK_THRESHOLD && !right_is_down) ++x_offset;
+        if (gaxis_left_x < -GAMEPAD_STICK_THRESHOLD && !left_is_down) --x_offset;
+        if (gaxis_left_y > GAMEPAD_STICK_THRESHOLD && !down_is_down) ++y_offset;
+        if (gaxis_left_y < -GAMEPAD_STICK_THRESHOLD && !up_is_down) --y_offset;
 
         render_back_buffer(&back_buffer);
 
