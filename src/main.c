@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdint.h>
+#include <x86intrin.h>
 
 #define PI 3.14159265359f
 
@@ -38,7 +39,7 @@ typedef struct {
     int16_t volume;
     size_t samples;
     size_t latency_bytes;
-    int hz;
+    int tone_hz;
     float period;
     float sine_t;
 } AudioBuffer;
@@ -103,8 +104,8 @@ void resize_back_buffer(BackBuffer *back_buffer) {
 void fill_audio_buffer(AudioBuffer *audio_buffer) {
     if (!audio_stream) return;
 
-    audio_buffer->hz = 512 + (int)(256.0f*(float)gaxis_right_x / (float)SDL_JOYSTICK_AXIS_MAX);
-    audio_buffer->period = (float)AUDIO_SAMPLE_RATE / (float)audio_buffer->hz;
+    audio_buffer->tone_hz = 512 + (int)(256.0f*(float)gaxis_right_x / (float)SDL_JOYSTICK_AXIS_MAX);
+    audio_buffer->period = (float)AUDIO_SAMPLE_RATE / (float)audio_buffer->tone_hz;
 
     audio_buffer->len = audio_buffer->latency_bytes;
     int queued = SDL_GetAudioStreamQueued(audio_stream);
@@ -117,11 +118,11 @@ void fill_audio_buffer(AudioBuffer *audio_buffer) {
         audio_buffer->play_cursor = 0;
 
     int32_t start = audio_buffer->play_cursor;
-    size_t len1 = 0;
+    size_t len = 0;
     for (size_t i = 0; i < audio_buffer->samples; ++i) {
         if (audio_buffer->play_cursor >= AUDIO_SAMPLE_RATE) {
             audio_buffer->play_cursor = 0;
-            len1 = i * BYTES_PER_SAMPLE;
+            len = i * BYTES_PER_SAMPLE;
         }
 
         int16_t sound = (int16_t)(sin(audio_buffer->sine_t) * (float)audio_buffer->volume);
@@ -133,9 +134,9 @@ void fill_audio_buffer(AudioBuffer *audio_buffer) {
         ++audio_buffer->play_cursor;
     }
 
-    if (len1) {
-        SDL_PutAudioStreamData(audio_stream, (int32_t*)audio_buffer->memory + start, (int)len1);
-        SDL_PutAudioStreamData(audio_stream, (int32_t*)audio_buffer->memory, (int)(audio_buffer->len - len1));
+    if (len) {
+        SDL_PutAudioStreamData(audio_stream, (int32_t*)audio_buffer->memory + start, (int)len);
+        SDL_PutAudioStreamData(audio_stream, (int32_t*)audio_buffer->memory, (int)(audio_buffer->len - len));
     } else
         SDL_PutAudioStreamData(audio_stream, (int32_t*)audio_buffer->memory + start, (int)audio_buffer->len);
 }
@@ -326,8 +327,8 @@ int game_init(BackBuffer *back_buffer, AudioBuffer *audio_buffer) {
     }
     audio_buffer->latency_bytes = (audio_buffer->samples * BYTES_PER_SAMPLE / FPS) * 2;
     audio_buffer->volume = 2000;
-    audio_buffer->hz = 256;
-    audio_buffer->period = (float)AUDIO_SAMPLE_RATE / (float)audio_buffer->hz;
+    audio_buffer->tone_hz = 256;
+    audio_buffer->period = (float)AUDIO_SAMPLE_RATE / (float)audio_buffer->tone_hz;
 
     return 0;
 }
@@ -352,6 +353,9 @@ int main(void) {
     if (game_init(&back_buffer, &audio_buffer)) return 1;
 
     is_running = true;
+    uint64_t perf_count_freq = SDL_GetPerformanceFrequency();
+    uint64_t start_count = SDL_GetPerformanceCounter();
+    uint64_t start_cycle_count = _rdtsc();
     while (is_running) {
         SDL_RenderClear(renderer);
 
@@ -366,6 +370,20 @@ int main(void) {
         SDL_FRect frect = {0, 0, back_buffer.width, back_buffer.height};
         SDL_RenderTexture(renderer, back_buffer.texture, &frect, &frect);
         SDL_RenderPresent(renderer);
+
+        uint64_t end_count = SDL_GetPerformanceCounter();
+
+        uint64_t microseconds_per_frame = 1000*1000*(end_count - start_count) / perf_count_freq;
+        float fps = (float)perf_count_freq / (float)(end_count - start_count);
+
+        start_count = end_count;
+
+        uint64_t end_cycle_count = _rdtsc();
+        float mega_cycles_elapsed = (float)(end_cycle_count - start_cycle_count) / (float)(1000*1000);
+
+        printf("%6dμs,\t%6.1ff/s,\t%6.2fMHz\n", (int32_t)microseconds_per_frame, fps, mega_cycles_elapsed);
+
+        start_cycle_count = end_cycle_count;
     }
 
     free(back_buffer.memory);
