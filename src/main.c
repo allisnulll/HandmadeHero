@@ -4,13 +4,18 @@
 #include <stdio.h>
 #include <stdint.h>
 
+#define PI 3.14159265359f
+
+#define FPS 60
 #define WINDOW_WIDTH 1280
 #define WINDOW_HEIGHT 720
 #define BYTES_PER_PIXEL 4
+
 #define AUDIO_SAMPLE_RATE 48000
+#define BYTES_PER_SAMPLE 4
+
 #define GAMEPAD_STICK_THRESHOLD 8000
 
-#define PI 3.14169f
 bool is_running;
 
 SDL_Window *window;
@@ -28,16 +33,18 @@ typedef struct {
 
 typedef struct {
     void *memory;
-    int32_t running_sample;
-    int16_t volume;
     size_t len;
+    int32_t play_cursor;
+    int16_t volume;
     size_t samples;
+    size_t latency_bytes;
     int hz;
     float period;
+    float sine_t;
 } AudioBuffer;
 
 uint8_t x_offset, y_offset;
-int gaxis_left_x, gaxis_left_y;
+int gaxis_left_x, gaxis_left_y, gaxis_right_x, gaxis_right_y;
 
 typedef struct {
     bool is_down;
@@ -82,7 +89,7 @@ void resize_back_buffer(BackBuffer *back_buffer) {
 
     uint32_t *new_memory = realloc(
         back_buffer->memory,
-        back_buffer->height*back_buffer->width * sizeof(uint32_t)
+        back_buffer->height*back_buffer->width * (uint32_t)BYTES_PER_PIXEL
     );
     if (!new_memory) {
         printf("realloc failed, frame skipped.\n");
@@ -96,38 +103,41 @@ void resize_back_buffer(BackBuffer *back_buffer) {
 void fill_audio_buffer(AudioBuffer *audio_buffer) {
     if (!audio_stream) return;
 
-    audio_buffer->len = (AUDIO_SAMPLE_RATE * sizeof(int16_t)*2);
+    audio_buffer->hz = 512 + (int)(256.0f*(float)gaxis_right_x / (float)SDL_JOYSTICK_AXIS_MAX);
+    audio_buffer->period = (float)AUDIO_SAMPLE_RATE / (float)audio_buffer->hz;
+
+    audio_buffer->len = audio_buffer->latency_bytes;
     int queued = SDL_GetAudioStreamQueued(audio_stream);
     if (queued > 0) {
+        if ((size_t)queued > audio_buffer->len) return;
         audio_buffer->len -= (uint32_t)queued;
-        if (audio_buffer->len <= 0) return;
     }
-    audio_buffer->samples = audio_buffer->len / sizeof(int16_t) / 2;
-    if (audio_buffer->running_sample >= AUDIO_SAMPLE_RATE)
-        audio_buffer->running_sample = 0;
+    audio_buffer->samples = audio_buffer->len / BYTES_PER_SAMPLE;
+    if (audio_buffer->play_cursor >= AUDIO_SAMPLE_RATE)
+        audio_buffer->play_cursor = 0;
 
-    int32_t starting_sample = audio_buffer->running_sample;
+    int32_t start = audio_buffer->play_cursor;
     size_t len1 = 0;
     for (size_t i = 0; i < audio_buffer->samples; ++i) {
-        if (audio_buffer->running_sample >= AUDIO_SAMPLE_RATE) {
-            audio_buffer->running_sample = 0;
-            len1 = i * sizeof(int16_t) * 2;
+        if (audio_buffer->play_cursor >= AUDIO_SAMPLE_RATE) {
+            audio_buffer->play_cursor = 0;
+            len1 = i * BYTES_PER_SAMPLE;
         }
 
-        int16_t sound = (int16_t)(sin(2.0f*PI * (float)audio_buffer->running_sample / audio_buffer->period) * (float)audio_buffer->volume);
+        int16_t sound = (int16_t)(sin(audio_buffer->sine_t) * (float)audio_buffer->volume);
 
-        ((int16_t*)audio_buffer->memory)[audio_buffer->running_sample*2] = sound;
-        ((int16_t*)audio_buffer->memory)[audio_buffer->running_sample*2+1] = sound;
+        ((int16_t*)audio_buffer->memory)[audio_buffer->play_cursor*2] = sound;
+        ((int16_t*)audio_buffer->memory)[audio_buffer->play_cursor*2+1] = sound;
 
-        ++audio_buffer->running_sample;
+        audio_buffer->sine_t += 2.0f*PI / audio_buffer->period;
+        ++audio_buffer->play_cursor;
     }
 
     if (len1) {
-        printf("HELLO");
-        SDL_PutAudioStreamData(audio_stream, (int32_t*)audio_buffer->memory + starting_sample, (int)len1);
+        SDL_PutAudioStreamData(audio_stream, (int32_t*)audio_buffer->memory + start, (int)len1);
         SDL_PutAudioStreamData(audio_stream, (int32_t*)audio_buffer->memory, (int)(audio_buffer->len - len1));
     } else
-        SDL_PutAudioStreamData(audio_stream, (int32_t*)audio_buffer->memory + starting_sample, (int)audio_buffer->len);
+        SDL_PutAudioStreamData(audio_stream, (int32_t*)audio_buffer->memory + start, (int)audio_buffer->len);
 }
 
 void process_gamepad_button(SDL_GamepadButtonEvent gbutton) {
@@ -251,6 +261,10 @@ void process_event(SDL_Event event, BackBuffer *back_buffer) {
             gaxis_left_x = event.gaxis.value;
         else if (event.gaxis.axis == SDL_GAMEPAD_AXIS_LEFTY)
             gaxis_left_y = event.gaxis.value;
+        else if (event.gaxis.axis == SDL_GAMEPAD_AXIS_RIGHTX)
+            gaxis_right_x = event.gaxis.value;
+        else if (event.gaxis.axis == SDL_GAMEPAD_AXIS_RIGHTY)
+            gaxis_right_y = event.gaxis.value;
         break;
     case SDL_EVENT_KEY_UP:
     case SDL_EVENT_KEY_DOWN:
@@ -295,7 +309,8 @@ int game_init(BackBuffer *back_buffer, AudioBuffer *audio_buffer) {
         goto end3;
     }
 
-    audio_buffer->len = (AUDIO_SAMPLE_RATE * sizeof(int16_t)*2);
+    audio_buffer->samples = AUDIO_SAMPLE_RATE;
+    audio_buffer->len = (audio_buffer->samples * BYTES_PER_SAMPLE);
     audio_buffer->memory = malloc(audio_buffer->len);
     if (!audio_buffer->memory) {
         printf("Couldn't allocate memory for audio buffer.\n");
@@ -309,9 +324,8 @@ int game_init(BackBuffer *back_buffer, AudioBuffer *audio_buffer) {
         SDL_Quit();
         return 1;
     }
-    audio_buffer->running_sample = 0;
+    audio_buffer->latency_bytes = (audio_buffer->samples * BYTES_PER_SAMPLE / FPS) * 2;
     audio_buffer->volume = 2000;
-    audio_buffer->samples = AUDIO_SAMPLE_RATE;
     audio_buffer->hz = 256;
     audio_buffer->period = (float)AUDIO_SAMPLE_RATE / (float)audio_buffer->hz;
 
