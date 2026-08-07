@@ -130,7 +130,7 @@ void fill_audio_buffer(AudioBuffer *audio_buffer) {
         ((int16_t*)audio_buffer->memory)[audio_buffer->play_cursor*2] = sound;
         ((int16_t*)audio_buffer->memory)[audio_buffer->play_cursor*2+1] = sound;
 
-        audio_buffer->sine_t += 2.0f*PI / audio_buffer->period;
+        audio_buffer->sine_t = (float)fmod((audio_buffer->sine_t + 2.0f*PI / audio_buffer->period), 2.0f*PI);
         ++audio_buffer->play_cursor;
     }
 
