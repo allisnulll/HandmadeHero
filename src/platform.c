@@ -1,21 +1,5 @@
-#include <SDL3/SDL.h>
-#include <math.h>
-#include <stdlib.h>
-#include <stdio.h>
-#include <stdint.h>
-#include <x86intrin.h>
-
-#define PI 3.14159265359f
-
-#define FPS 60
-#define WINDOW_WIDTH 1280
-#define WINDOW_HEIGHT 720
-#define BYTES_PER_PIXEL 4
-
-#define AUDIO_SAMPLE_RATE 48000
-#define BYTES_PER_SAMPLE 4
-
-#define GAMEPAD_STICK_THRESHOLD 8000
+#include "headers/platform.h"
+#include "headers/handmade.h"
 
 bool is_running;
 
@@ -24,67 +8,10 @@ SDL_Renderer *renderer;
 SDL_Gamepad *gamepad;
 SDL_AudioStream *audio_stream;
 
-typedef struct {
-    SDL_Texture *texture;
-    uint32_t *memory;
-    uint16_t width;
-    uint16_t height;
-    int pitch;
-} BackBuffer;
-
-typedef struct {
-    void *memory;
-    size_t len;
-    int32_t play_cursor;
-    int16_t volume;
-    size_t samples;
-    size_t latency_bytes;
-    int tone_hz;
-    float period;
-    float sine_t;
-} AudioBuffer;
-
-uint8_t x_offset, y_offset;
+Button up, down, left, right;
 int gaxis_left_x, gaxis_left_y, gaxis_right_x, gaxis_right_y;
 
-typedef struct {
-    bool is_down;
-    bool was_down;
-} Button;
-Button up, down, left, right;
-
-void render_back_buffer(BackBuffer *back_buffer);
-void resize_back_buffer(BackBuffer *back_buffer);
-void fill_audio_buffer(AudioBuffer *audio_buffer);
-void process_gamepad_button(SDL_GamepadButtonEvent gbutton);
-void process_key(SDL_KeyboardEvent key);
-void process_event(SDL_Event event, BackBuffer *back_buffer);
-int game_init(BackBuffer *back_buffer, AudioBuffer *audio_buffer);
-void game_tick(void);
-
-void render_back_buffer(BackBuffer *back_buffer) {
-    uint8_t *row = (uint8_t*)back_buffer->memory;
-    for (int y = 0; y < back_buffer->height; ++y) {
-        uint32_t *pixel = (uint32_t*)row;
-        for (int x = 0; x < back_buffer->width; ++x) {
-            uint8_t red = (uint8_t)x + x_offset;
-            uint8_t green = (uint8_t)y + y_offset;
-            uint8_t blue = 0;
-
-            *pixel++ = (uint32_t)(blue << 16) | (uint32_t)(green << 8) | (uint32_t)red;
-        }
-        row += back_buffer->pitch;
-    }
-
-    SDL_UpdateTexture(
-        back_buffer->texture,
-        &(SDL_Rect){0, 0, back_buffer->width, back_buffer->height},
-        back_buffer->memory,
-        back_buffer->pitch
-    );
-}
-
-void resize_back_buffer(BackBuffer *back_buffer) {
+void resize_back_buffer(BackBuffer *back_buffer, uint8_t x_offset, uint8_t y_offset) {
     SDL_GetWindowSize(window, (int*)&back_buffer->width, (int*)&back_buffer->height);
     back_buffer->pitch = back_buffer->width * BYTES_PER_PIXEL;
 
@@ -98,7 +25,20 @@ void resize_back_buffer(BackBuffer *back_buffer) {
     }
     back_buffer->memory = new_memory;
 
-    render_back_buffer(back_buffer);
+    GameBackBuffer buffer = {
+        .memory = back_buffer->memory,
+        .width = back_buffer->width,
+        .height = back_buffer->height,
+        .pitch = back_buffer->pitch,
+    };
+    game_update_and_render(&buffer, x_offset, y_offset);
+
+    SDL_UpdateTexture(
+        back_buffer->texture,
+        &(SDL_Rect){0, 0, buffer.width, buffer.height},
+        buffer.memory,
+        buffer.pitch
+    );
 }
 
 void fill_audio_buffer(AudioBuffer *audio_buffer) {
@@ -203,14 +143,14 @@ void process_key(SDL_KeyboardEvent key) {
     }
 }
 
-void process_event(SDL_Event event, BackBuffer *back_buffer) {
+void process_event(SDL_Event event, BackBuffer *back_buffer, uint8_t x_offset, uint8_t y_offset) {
     switch (event.type) {
 
     case SDL_EVENT_QUIT:
         is_running = false;
         break;
     case SDL_EVENT_WINDOW_RESIZED:
-        resize_back_buffer(back_buffer);
+        resize_back_buffer(back_buffer, x_offset, y_offset);
         break;
 
     case SDL_EVENT_AUDIO_DEVICE_ADDED: {
@@ -333,24 +273,25 @@ int game_init(BackBuffer *back_buffer, AudioBuffer *audio_buffer) {
     return 0;
 }
 
-void game_tick(void) {
-    if (right.is_down) ++x_offset;
-    if (left.is_down) --x_offset;
-    if (down.is_down) ++y_offset;
-    if (up.is_down) --y_offset;
+void game_tick(uint8_t *x_offset, uint8_t *y_offset) {
+    if (right.is_down) ++*x_offset;
+    if (left.is_down) --*x_offset;
+    if (down.is_down) ++*y_offset;
+    if (up.is_down) --*y_offset;
     if (right.is_down || left.is_down || down.is_down || up.is_down)
         SDL_RumbleGamepad(gamepad, 0, 0xffff, 10);
 
-    if (gaxis_left_x > GAMEPAD_STICK_THRESHOLD && !right.is_down) ++x_offset;
-    if (gaxis_left_x < -GAMEPAD_STICK_THRESHOLD && !left.is_down) --x_offset;
-    if (gaxis_left_y > GAMEPAD_STICK_THRESHOLD && !down.is_down) ++y_offset;
-    if (gaxis_left_y < -GAMEPAD_STICK_THRESHOLD && !up.is_down) --y_offset;
+    if (gaxis_left_x > GAMEPAD_STICK_THRESHOLD && !right.is_down) ++*x_offset;
+    if (gaxis_left_x < -GAMEPAD_STICK_THRESHOLD && !left.is_down) --*x_offset;
+    if (gaxis_left_y > GAMEPAD_STICK_THRESHOLD && !down.is_down) ++*y_offset;
+    if (gaxis_left_y < -GAMEPAD_STICK_THRESHOLD && !up.is_down) --*y_offset;
 }
 
 int main(void) {
     BackBuffer back_buffer = {0};
     AudioBuffer audio_buffer = {0};
     if (game_init(&back_buffer, &audio_buffer)) return 1;
+    uint8_t x_offset, y_offset;
 
     is_running = true;
     uint64_t perf_count_freq = SDL_GetPerformanceFrequency();
@@ -360,16 +301,29 @@ int main(void) {
         SDL_RenderClear(renderer);
 
         SDL_Event event;
-        while (SDL_PollEvent(&event)) process_event(event, &back_buffer);
+        while (SDL_PollEvent(&event)) process_event(event, &back_buffer, x_offset, y_offset);
 
-        game_tick();
+        game_tick(&x_offset, &y_offset);
 
-        render_back_buffer(&back_buffer);
-        fill_audio_buffer(&audio_buffer);
+        GameBackBuffer game_back_buffer = {
+            .memory = back_buffer.memory,
+            .width = back_buffer.width,
+            .height = back_buffer.height,
+            .pitch = back_buffer.pitch,
+        };
+        game_update_and_render(&game_back_buffer, x_offset, y_offset);
 
-        SDL_FRect frect = {0, 0, back_buffer.width, back_buffer.height};
+        SDL_UpdateTexture(
+            back_buffer.texture,
+            &(SDL_Rect){0, 0, game_back_buffer.width, game_back_buffer.height},
+            game_back_buffer.memory,
+            game_back_buffer.pitch
+        );
+        SDL_FRect frect = {0, 0, game_back_buffer.width, game_back_buffer.height};
         SDL_RenderTexture(renderer, back_buffer.texture, &frect, &frect);
         SDL_RenderPresent(renderer);
+
+        fill_audio_buffer(&audio_buffer);
 
         uint64_t end_count = SDL_GetPerformanceCounter();
 

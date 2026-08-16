@@ -36,7 +36,7 @@ cflags=(
     "-Wl,-z,relro" "-Wl,-z,now"
     "-Wl,--as-needed" "-Wl,--no-copy-dt-needed-entries"
     \
-    src/main.c
+    src/platform.c src/handmade.c
 )
 
 if [ "$prod" ]; then
